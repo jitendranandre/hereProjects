@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en-us">
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Emergency Hospitals</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.3.3/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
+    <link rel="stylesheet" href="leaflet-areaselect.css" />
+    <link rel="stylesheet" href="hospitals.css" />
+    <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+  </head>
+
+  <body>
+    <div class="header">
+        <h2>Emergency Hospitals</h2>
+        <div id="buttons"></div>
+        <div class="dropdown">
+          <button class="dropbtn">ER Wards Availablity</button>
+          <div class="dropdown-content">
+            <div onclick="fetchTagData('ER_Wards_Availability@1')">Less than 25</div>
+            <div onclick="fetchTagData('ER_Wards_Availability@2')">Between 25 & 30</div>
+            <div onclick="fetchTagData('ER_Wards_Availability@3')">Above 50</div>
+          </div>
+        </div>
+        <div class="dropdown">
+          <button class="dropbtn">Cost</button>
+          <div class="dropdown-content">
+            <div  onclick="fetchTagData('Charge@1')">Low</div>
+            <div  onclick="fetchTagData('Charge@2')">Medium</div>
+            <div  onclick="fetchTagData('Charge@3')">High</div>
+          </div>
+        </div>
+        <div class="dropdown">
+          <button class="dropbtn" onclick="fetchData()">All</button>
+        </div>
+        <div class="dropdown" >
+          <button class="dropbtn" onclick="fetchSelectedAreaHospitals()">Select Area</button>
+        </div>
+    </div>
+    <div class="container">
+        <div id="map"></div>
+    </div>
+
+    <!-- leaflet -->
+    <script src="leaflet.js"></script>
+    <script src="leaflet-areaselect.js"></script>
+    <script src="https://unpkg.com/tangram/dist/tangram.min.js"></script>
+    <!-- Demo setup -->
+    <script>
+ 		var dataSet=[];
+        var areaSelect = L.areaSelect({width:100, height:100});
+        var mode = 'areaSelectHidden';
+        var theMap = L.map('map', {maxZoom: 14});
+        L.tileLayer('http://tile.stamen.com/terrain/{z}/{x}/{y}.png').addTo(theMap);
+        theMap.attributionControl.addAttribution('Hospitals data via <a href="http://adsbexchange.com/">ADS-B Exchange</a>');
+        theMap.attributionControl.addAttribution('Map tiles by <a href="http://stamen.com">Stamen Design</a>, under <a href="http://creativecommons.org/licenses/by/3.0">CC BY 3.0</a>. Map data by <a href="http://openstreetmap.org">OpenStreetMap</a>, under <a href="http://www.openstreetmap.org/copyright">ODbL</a>');
+        theMap.on('click', function(e) {
+            var x1=e.latlng.lng
+            var y1=e.latlng.lat
+            var ntuconv = 100000
+			var distBuff = 15000
+
+            r1x1 = ((x1 * ntuconv) + distBuff) / ntuconv
+			l1x1 = ((x1 * ntuconv) - distBuff) / ntuconv
+			r1y1 = ((y1 * ntuconv) + distBuff) / ntuconv
+			l1y1 = ((y1 * ntuconv) - distBuff) / ntuconv
+			
+			var recBounds = [[l1y1, l1x1], [r1y1, r1x1]];
+			var bounds=L.rectangle(recBounds, {color: "#ff7800", weight: 1}).getBounds();
+            fetchRouteInBoundingBox(bounds,x1,y1);
+        });
+        var hospitalIcon = new L.DivIcon({html: '<img class="icon" src="hospital.png">'});
+
+        var airports = [
+            {
+                name: 'ER Availablity',
+                code: 'ksfo',
+                location: [37.61899948120117, -122.375]
+            },
+            {
+                name: 'Cost',
+                code: 'kjfk',
+                location: [40.63980103, -73.77890015]
+            },
+            {
+                name: 'All',
+                code: 'kjfk',
+                location: [40.63980103, -73.77890015]
+            }
+        ];
+        // center of seattle
+        theMap.setView([47.6062, -122.3321], 6);
+
+        var planes = [];
+        function renderHospitals(data) {
+            planes.forEach(function (c) { c.remove(); });
+            planes = [];
+
+            data.forEach(function (feature) {
+                var c = L.marker(
+                    [feature.geometry.coordinates[1], feature.geometry.coordinates[0]],
+                    {
+                        icon: hospitalIcon
+                    });
+                c.addTo(theMap);
+                c.bindTooltip('<h3>' + feature.properties.NAME + '</h3><ul><li>Address: ' + feature.properties.ADDRESS + '</li><li>Phone: ' + feature.properties.PHONE + '</li><li>ER Beds: ' + feature.properties.Beds_ER + '</li><li>Average Cost: ' + feature.properties.Average_Cost_per_day +'</li></ul>');
+                c.getElement().childNodes[0].style.transform = c.getElement().childNodes[0].style.transform + " rotate(" + feature.properties.Trak + "deg)";
+                planes.push(c);
+            });
+        }
+
+        function fetchSelectedAreaHospitals() {
+            if (mode === 'areaSelect') {
+                areaSelect.remove();
+                mode = 'areaSelectHidden';
+            } else {
+                mode = 'areaSelect';
+                areaSelect.addTo(theMap);
+                areaSelect.on("change", function() {
+                  var bounds = this.getBounds();
+                  var url = 'https://xyz.api.here.com/hub/spaces/T7r4scox/bbox?access_token=tS9fJJZEUA2hHIJiwqk0Cw&limit=20&west=' + bounds.getWest() + '&south=' + bounds.getSouth() + '&east=' + bounds.getEast() + '&north=' + bounds.getNorth();
+                  fetch(url).then((response) => response.json()).then(function(data) {
+                      var mergedData=''
+                      var len = data.features.length;
+                      
+                      data.features.forEach(function(hospital){
+                        var obj=JSON.parse(JSON.stringify(hospital))
+                        mergedData=mergedData.concat(obj.properties.NAME + " : "+obj.properties.ADDRESS+ " : "+obj.properties.PHONE+ + " : "+obj.properties.Beds_ER+" <br>")
+                      })  
+
+                      L.popup().setLatLng(bounds.getCenter()).setContent(len + ' Hospital(s) in the selected area <br> <b>'+ mergedData+'</b> ').openOn(theMap);
+                  });
+                });
+            }
+        }
+
+        function fetchRouteInBoundingBox(bounds,lng,lat) {
+              var url = 'https://xyz.api.here.com/hub/spaces/T7r4scox/bbox?access_token=tS9fJJZEUA2hHIJiwqk0Cw&limit=4&west=' + bounds.getWest() + '&south=' + bounds.getSouth() + '&east=' + bounds.getEast() + '&north=' + bounds.getNorth();
+              fetch(url).then((response) => response.json()).then(function(data) {
+                  var len = data.features.length;
+                  var latlng = L.latLng(lat, lng);
+                  var popup=L.popup().setLatLng(latlng).setContent(len + ' Hospital(s) near by your location <br> <b>').openOn(theMap)
+                  data.features.forEach(function(hospital){
+					var obj=JSON.parse(JSON.stringify(hospital))
+					var hospitalName=obj.properties.NAME
+					var hospitalLng=obj.geometry.coordinates[0];
+                    var hospitalLat=obj.geometry.coordinates[1];
+                  	
+                  	fetchRouteFromHereAPI(lat,lng,hospitalLat,hospitalLng,hospitalName,popup)
+                  })  
+              });
+        }
+        
+        //Fetch Nearest Hospitals from clicked location with traffic details from HERE API
+        function fetchRouteFromHereAPI(lat,lng,hospitalLat,hospitalLng,hospitalName,popup){
+        	 var mergedData=''
+        		var url='https://route.api.here.com/routing/7.2/calculateroute.json?waypoint0='+lat+'%2C'+lng+'&waypoint1='+hospitalLat+'%2C'+hospitalLng+'&mode=fastest%3Bcar%3Btraffic%3Aenabled&app_id=devportal-demo-20180625&app_code=9v2BkviRwi9Ot26kp2IysQ&departure=now'
+		        	var result =fetch(url,{async: false}).then((response)=> response.json()).then(function(routeData) {
+		        		var hospitalRoute=JSON.parse(JSON.stringify(routeData))
+		        		// console.log(hospitalRoute.response.route[0].summary.distance)
+		        		mergedData=mergedData.concat(hospitalName+" Distance:"+hospitalRoute.response.route[0].summary.distance/1000 +"km Time:"+Math.round(hospitalRoute.response.route[0].summary.travelTime/60) +" mins <br>");
+		        		return mergedData
+		        	});
+		        	
+		        	result.then(function(value) {
+		        		popup.setContent(popup.getContent()+value)
+		        	});
+        }
+
+        function fetchData() {
+            var url = 'https://xyz.api.here.com/hub/spaces/T7r4scox/search?access_token=tS9fJJZEUA2hHIJiwqk0Cw';
+            fetch(url).then(resp => resp.json()).then(data => {
+                renderHospitals(data.features);
+            });
+            theMap.setZoom(7);
+        }
+
+        function fetchTagData(tagName) {
+            var url = 'https://xyz.api.here.com/hub/spaces/T7r4scox/search?access_token=tS9fJJZEUA2hHIJiwqk0Cw&tags='+tagName;
+            fetch(url).then(resp => resp.json()).then(data => {
+                renderHospitals(data.features);
+            });
+            theMap.setZoom(7);
+        }
+
+        fetchData();
+    </script>
+
+  </body>
+</html>
